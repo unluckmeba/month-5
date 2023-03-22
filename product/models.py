@@ -21,5 +21,11 @@ class Product(models.Model):
 
 
 class Review(models.Model):
-    text = models.CharField(max_length=500)
-    product = models.ForeignKey(Product, on_delete=models.CASCADE)
+    CHOICES = ((i, '* ' * i) for i in range(1, 6))
+    movie = models.ForeignKey(Product, on_delete=models.CASCADE,
+                              related_name='reviews')
+    stars = models.IntegerField(choices=CHOICES)
+    text = models.TextField()
+
+    def __str__(self):
+        return self.text
