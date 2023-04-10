@@ -50,3 +50,10 @@ class Review(models.Model):
     @property
     def product_title(self):
         return self.product.title
+
+
+class Hashtag(models.Model):
+    title = models.CharField(max_length=55)
+
+    def __str__(self):
+        return self.title

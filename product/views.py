@@ -1,134 +1,121 @@
-from .serializers import CategorySerializer, ProductSerializer, ReviewSerializer, RatingSerializer
-from rest_framework.response import Response
-from rest_framework.decorators import api_view
-from .models import Category, Product, Review
-from rest_framework import status
+from django.shortcuts import render, redirect
+from product.models import Product, Hashtag, Review
+from .forms import ProductCreateForm, ReviewCreateForm
+from Products.constants import PAGINATION_LIMIT
+from django.views.generic import ListView, CreateView, DetailView
 
 
-@api_view(['GET', 'PUT', 'DELETE'])
-def category_api_view(request, id_):
-    try:
-        category = Category.objects.get(id=id_)
-    except Category.DoesNotExist:
-        return Response(status=status.HTTP_404_NOT_FOUND,
-                        data={'error': 'Category not found!'})
-
-    if request.method == "GET":
-        serializer = CategorySerializer(category)
-        return Response(data=serializer.data)
-
-    elif request.method == "PUT":
-        category.name = request.data.get('name')
-        return Response(data=CategorySerializer(category).data)
-
-    elif request.method == "DELETE":
-        category.delete()
-        return Response(status=status.HTTP_404_NOT_FOUND, data={'error': 'categories not found!'})
+class MainListAPIView(ListView):
+    model = Product
 
 
-@api_view(['GET', 'POST'])
-def category_list_api_view(request):
-    category_list = Category.objects.all()
+class ProductListAPIView(ListView):
+    model = Product
+    context_object_name = 'products'
 
-    if request.method == "GET":
-        serializer = CategorySerializer(category_list, many=True)
-        return Response(data=serializer.data)
+    def get(self, request, **kwargs):
+        products = self.get_queryset()
+        search = request.GET.get('search')
+        page = int(request.GET.get('page', 1))
 
-    elif request.method == "POST":
-        name = request.data.get('name')
-        category = Category.objects.create(name=name)
-        return Response(data=CategorySerializer(category).data)
+        if search:
+            products = products.filter(title__contains=search) | products.filter(description__contains=search)
 
+        max_page = products.__len__() / PAGINATION_LIMIT
+        if round(max_page) < max_page:
+            max_page = round(max_page) + 1
+        else:
+            max_page = round(max_page)
 
-@api_view(['GET'])
-def product_list_api_view(request):
-    products = Product.objects.all()
-    serializer = ProductSerializer(products, many=True)
-    return Response(data=serializer.data)
+        products = products[PAGINATION_LIMIT * (page - 1):PAGINATION_LIMIT * page]
 
+        contex = {
+            'products': [
+                {
+                    'id': product.id,
+                    'title': product.title,
+                    'image': product.image,
+                    'quantity': product.quantity,
+                    'price': product.price,
+                    'hashtags': product.hashtags.all()
+                } for product in products
+            ],
+            'user': request.user,
+            'pages': range(1, max_page + 1)
+        }
 
-@api_view(['GET'])
-def products_reviews_api_view(request):
-    products = Product.objects.all()
-    serializer = RatingSerializer(products, many=True)
-    return Response(data=serializer.data)
-
-
-@api_view(['GET', 'POST'])
-def product_list_api_view(request):
-    if request.method == "GET":
-        product_list = Product.objects.all()
-        serializer = ProductSerializer(product_list, many=True)
-        return Response(data=serializer.data)
-
-    elif request.method == 'POST':
-        title = request.data.get('title')
-        description = request.data.get('description')
-        price = request.data.get('price')
-        category_id = request.data.get('category_id')
-
-        products = Product.objects.create(title=title, description=description,
-                                          price=price, category_id=category_id)
-        return Response(data=ProductSerializer(products).data)
+        return render(request, self.template_name, context=contex)
 
 
-@api_view(['GET', 'PUT', 'DELETE'])
-def product_api_view(request, id_):
-    try:
-        product = Product.objects.get(id=id_)
-    except Product.DoesNotExist:
-        return Response(status=status.HTTP_404_NOT_FOUND,
-                        data={'error': 'Product not found!'})
-    if request.method == 'GET':
-        serializer = ProductSerializer(product)
-        return Response(data=serializer.data)
+class HashtagsListAPIView(ListView):
+    model = Hashtag
 
-    elif request.method == 'PUT':
-        product.title = request.data.get('title')
-        product.description = request.data.get('description')
-        product.price = request.data.get('price')
-        product.category_id = request.data.get('category_id')
-        return Response(data=ProductSerializer(product).data)
+    def get(self, request, **kwargs):
+        hashtags = self.get_queryset()
+        context = {
+            'hashtags': hashtags
+        }
 
-    elif request.method == 'DELETE':
-        product.delete()
-        return Response(status=status.HTTP_404_NOT_FOUND,
-                        data={'error': 'product not found!'})
+        return render(request, self.template_name, context=context)
 
 
-@api_view(['GET', 'POST'])
-def review_list_api_view(request):
-    if request.method == "GET":
-        review_list = Review.objects.all()
-        serializer = ReviewSerializer(review_list, many=True)
-        return Response(data=serializer.data)
+class ProductDetailListAPIView(DetailView, CreateView):
+    model = Product
+    form_class = ReviewCreateForm
+    pk_url_kwarg = 'id'
 
-    elif request.method == 'POST':
-        text = request.data.get('text')
-        product_id = request.data.get('product_id')
-        stars = request.data.get('stars')
-        reviews = Review.objects.create(text=text, stars=stars, product_id=product_id)
-        return Response(data=ReviewSerializer(reviews).data)
+    def get_context_data(self, *, object_list=None, **kwargs):
+        return {
+            'product': self.get_object(),
+            'reviews': Review.objects.filter(product=self.get_object()),
+            'form': kwargs.get('form', self.form_class)
+        }
+
+    def post(self, request, **kwargs):
+
+        data = request.POST
+        form = ReviewCreateForm(data=data)
+
+        if form.is_valid():
+            Review.objects.create(
+                text=form.cleaned_data.get('text'),
+                rate=form.cleaned_data.get('rate'),
+                product_id=self.get_object().id
+            )
+            return redirect(f'/products/{self.get_object().id}/')
+
+        return render(request, self.template_name, context=self.get_context_data(
+            form=form
+        ))
 
 
-@api_view(['GET', 'PUT', 'DELETE'])
-def review_api_view(request, id_):
-    try:
-        review = Review.objects.get(id=id_)
-    except Review.DoesNotExist:
-        return Response(status=status.HTTP_404_NOT_FOUND,
-                        data={'error': 'Review not found!'})
-    if request.method == 'GET':
-        serializer = ReviewSerializer(review)
-        return Response(data=serializer.data)
+class ProductCreatListAPIView(ListView, CreateView):
+    model = Product
+    form_class = ProductCreateForm
 
-    elif request.method == 'PUT':
-        review.text = request.data.get('text')
-        review.product_id = request.data.get('product_id')
-        review.stars = request.data.get('stars')
-        return Response(data=ReviewSerializer(review).data)
+    def get_context_data(self, *, object_list=None, **kwargs):
+        return {
+            'form': self.form_class if not kwargs.get('form') else kwargs['form']
+        }
 
-    elif request.method == 'DELETE':
-        review.delete()
-        return Response(status=status.HTTP_404_NOT_FOUND,
-                        data={'error': 'review not found!'})
+    def get(self, request, **kwargs):
+        return render(request, self.template_name, context=self.get_context_data())
+
+    def post(self, request, **kwargs):
+        data, files = request.POST, request.FILES
+
+        form = ProductCreateForm(data, files)
+
+        if form.is_valid():
+            Product.objects.create(
+                image=form.cleaned_data.get('image'),
+                title=form.cleaned_data.get('title'),
+                description=form.cleaned_data.get('description'),
+                quantity=form.cleaned_data.get('quantity'),
+                price=form.cleaned_data.get('price')
+            )
+            return redirect('/products')
+
+        return render(request, self.template_name, context=self.get_context_data(
+            form=form
+        ))
